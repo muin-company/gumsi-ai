@@ -1,7 +1,10 @@
 import type { Metadata } from "next";
 import "./globals.css";
 
+const siteUrl = process.env.NEXT_PUBLIC_APP_URL || "https://gumsi.muin.company";
+
 export const metadata: Metadata = {
+  metadataBase: new URL(siteUrl),
   title: "검시AI - AI 검정고시 튜터 | 24시간 맞춤형 학습",
   description:
     "검정고시 합격의 지름길! AI 튜터와 함께 24시간 언제든지 학습하세요. 맞춤형 문제, 실시간 질문 응답, 학습 분석으로 효율적인 합격 전략을 제시합니다.",
