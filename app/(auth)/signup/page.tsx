@@ -22,8 +22,35 @@ export default function SignupPage() {
       return;
     }
 
-    // TODO: Implement Supabase authentication
-    console.log("Signup attempt:", { email, password, name });
+    try {
+      // localStorage fallback for beta signups (before Supabase integration)
+      const signupData = {
+        email,
+        name,
+        timestamp: new Date().toISOString(),
+      };
+
+      // Get existing signups
+      const existingSignups = localStorage.getItem("gumsi-beta-signups");
+      const signups = existingSignups ? JSON.parse(existingSignups) : [];
+
+      // Check if email already exists
+      if (signups.some((s: any) => s.email === email)) {
+        setError("이미 등록된 이메일입니다");
+        return;
+      }
+
+      // Add new signup
+      signups.push(signupData);
+      localStorage.setItem("gumsi-beta-signups", JSON.stringify(signups));
+
+      // Success - redirect or show message
+      alert("베타 신청이 완료되었습니다! 곧 연락드리겠습니다.");
+      window.location.href = "/";
+    } catch (err) {
+      setError("신청 중 오류가 발생했습니다. 다시 시도해주세요.");
+      console.error("Signup error:", err);
+    }
   };
 
   return (
