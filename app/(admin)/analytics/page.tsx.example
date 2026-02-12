@@ -1,0 +1,429 @@
+'use client';
+
+/**
+ * 검시AI Analytics Dashboard
+ * 
+ * Copy this to app/(admin)/analytics/page.tsx and customize as needed
+ * Add authentication middleware to protect this route
+ */
+
+import { useEffect, useState } from 'react';
+import { supabase } from '@/lib/supabase';
+
+interface Metrics {
+  totalUsers: number;
+  dau: number;
+  mau: number;
+  totalSessions: number;
+  totalChatInteractions: number;
+  totalQuestionAttempts: number;
+  topSubjects: Array<{ subject: string; count: number; users: number }>;
+  recentActivity: Array<{
+    date: string;
+    dau: number;
+    sessions: number;
+    chats: number;
+  }>;
+}
+
+export default function AnalyticsDashboard() {
+  const [metrics, setMetrics] = useState<Metrics | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [dateRange, setDateRange] = useState(30); // days
+
+  useEffect(() => {
+    loadMetrics();
+  }, [dateRange]);
+
+  async function loadMetrics() {
+    setLoading(true);
+    try {
+      // Parallel queries for better performance
+      const [
+        totalUsersResult,
+        dauResult,
+        mauResult,
+        sessionsResult,
+        chatsResult,
+        questionsResult,
+        subjectsResult,
+        activityResult,
+      ] = await Promise.all([
+        // Total users
+        supabase.from('users').select('*', { count: 'exact', head: true }),
+
+        // DAU
+        supabase.rpc('get_dau'),
+
+        // MAU
+        supabase.rpc('get_mau'),
+
+        // Total sessions (date range)
+        supabase
+          .from('user_sessions')
+          .select('*', { count: 'exact', head: true })
+          .gte(
+            'session_start',
+            new Date(Date.now() - dateRange * 24 * 60 * 60 * 1000).toISOString()
+          ),
+
+        // Total chat interactions (date range)
+        supabase
+          .from('chat_interactions')
+          .select('*', { count: 'exact', head: true })
+          .gte(
+            'created_at',
+            new Date(Date.now() - dateRange * 24 * 60 * 60 * 1000).toISOString()
+          ),
+
+        // Total question attempts (date range)
+        supabase
+          .from('question_attempts')
+          .select('*', { count: 'exact', head: true })
+          .gte(
+            'created_at',
+            new Date(Date.now() - dateRange * 24 * 60 * 60 * 1000).toISOString()
+          ),
+
+        // Top subjects
+        supabase
+          .from('chat_interactions')
+          .select('subject, user_id')
+          .gte(
+            'created_at',
+            new Date(Date.now() - dateRange * 24 * 60 * 60 * 1000).toISOString()
+          )
+          .not('subject', 'is', null),
+
+        // Recent activity (last 7 days)
+        supabase
+          .from('daily_metrics')
+          .select('*')
+          .gte('metric_date', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString())
+          .order('metric_date', { ascending: false }),
+      ]);
+
+      // Process top subjects
+      const subjectMap = new Map<string, Set<string>>();
+      (subjectsResult.data || []).forEach((row: any) => {
+        if (!subjectMap.has(row.subject)) {
+          subjectMap.set(row.subject, new Set());
+        }
+        subjectMap.get(row.subject)?.add(row.user_id);
+      });
+
+      const topSubjects = Array.from(subjectMap.entries())
+        .map(([subject, users]) => ({
+          subject,
+          count: users.size,
+          users: users.size,
+        }))
+        .sort((a, b) => b.count - a.count);
+
+      // Process recent activity
+      const recentActivity = (activityResult.data || []).map((row: any) => ({
+        date: row.metric_date,
+        dau: row.dau,
+        sessions: row.total_sessions,
+        chats: row.total_chat_messages,
+      }));
+
+      setMetrics({
+        totalUsers: totalUsersResult.count || 0,
+        dau: dauResult.data?.[0]?.dau || 0,
+        mau: mauResult.data?.[0]?.mau || 0,
+        totalSessions: sessionsResult.count || 0,
+        totalChatInteractions: chatsResult.count || 0,
+        totalQuestionAttempts: questionsResult.count || 0,
+        topSubjects,
+        recentActivity,
+      });
+    } catch (error) {
+      console.error('Error loading metrics:', error);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mb-4" />
+          <p className="text-gray-600">Loading analytics...</p>
+        </div>
+      </div>
+    );
+  }
+
+  const dauMauRatio = metrics?.mau ? (metrics.dau / metrics.mau) * 100 : 0;
+
+  return (
+    <div className="min-h-screen bg-gray-50 py-8">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        {/* Header */}
+        <div className="mb-8">
+          <h1 className="text-3xl font-bold text-gray-900">검시AI Analytics</h1>
+          <p className="text-gray-600 mt-2">
+            Real-time insights into user behavior and product usage
+          </p>
+        </div>
+
+        {/* Date Range Selector */}
+        <div className="mb-6 flex gap-2">
+          {[7, 30, 90].map((days) => (
+            <button
+              key={days}
+              onClick={() => setDateRange(days)}
+              className={`px-4 py-2 rounded-lg font-medium ${
+                dateRange === days
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-white text-gray-700 hover:bg-gray-100'
+              }`}
+            >
+              Last {days} days
+            </button>
+          ))}
+          <button
+            onClick={loadMetrics}
+            className="ml-auto px-4 py-2 bg-white text-gray-700 rounded-lg hover:bg-gray-100"
+          >
+            🔄 Refresh
+          </button>
+        </div>
+
+        {/* Key Metrics */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+          <MetricCard
+            title="Total Users"
+            value={metrics?.totalUsers || 0}
+            icon="👥"
+            trend="+12% vs last month"
+          />
+          <MetricCard
+            title="DAU (Daily Active)"
+            value={metrics?.dau || 0}
+            icon="📈"
+            subtitle={`${dauMauRatio.toFixed(1)}% of MAU`}
+          />
+          <MetricCard
+            title="MAU (Monthly Active)"
+            value={metrics?.mau || 0}
+            icon="📊"
+          />
+          <MetricCard
+            title="Sessions"
+            value={metrics?.totalSessions || 0}
+            icon="⏱️"
+            subtitle={`Last ${dateRange} days`}
+          />
+        </div>
+
+        {/* Engagement Metrics */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+          <div className="bg-white p-6 rounded-lg shadow">
+            <h2 className="text-xl font-bold text-gray-900 mb-4">Engagement</h2>
+            <div className="space-y-4">
+              <div className="flex justify-between items-center">
+                <span className="text-gray-600">Chat Interactions</span>
+                <span className="text-2xl font-bold text-blue-600">
+                  {metrics?.totalChatInteractions.toLocaleString() || 0}
+                </span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-gray-600">Question Attempts</span>
+                <span className="text-2xl font-bold text-green-600">
+                  {metrics?.totalQuestionAttempts.toLocaleString() || 0}
+                </span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-gray-600">Avg Chats per User</span>
+                <span className="text-2xl font-bold text-purple-600">
+                  {metrics?.totalUsers
+                    ? (
+                        metrics.totalChatInteractions / metrics.totalUsers
+                      ).toFixed(1)
+                    : 0}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Top Subjects */}
+          <div className="bg-white p-6 rounded-lg shadow">
+            <h2 className="text-xl font-bold text-gray-900 mb-4">
+              Top Subjects (Last {dateRange} days)
+            </h2>
+            <div className="space-y-3">
+              {metrics?.topSubjects.slice(0, 6).map(({ subject, count, users }) => (
+                <div key={subject} className="flex items-center justify-between">
+                  <div className="flex items-center gap-3 flex-1">
+                    <span className="font-medium text-gray-900 capitalize">
+                      {subject}
+                    </span>
+                    <div className="flex-1 bg-gray-200 rounded-full h-2">
+                      <div
+                        className="bg-blue-600 h-2 rounded-full"
+                        style={{
+                          width: `${
+                            (count /
+                              (metrics.topSubjects[0]?.count || 1)) *
+                            100
+                          }%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+                  <div className="text-right ml-4">
+                    <div className="text-sm font-medium text-gray-900">
+                      {count}
+                    </div>
+                    <div className="text-xs text-gray-500">{users} users</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Recent Activity */}
+        <div className="bg-white p-6 rounded-lg shadow mb-8">
+          <h2 className="text-xl font-bold text-gray-900 mb-4">
+            Recent Activity (Last 7 days)
+          </h2>
+          <div className="overflow-x-auto">
+            <table className="min-w-full">
+              <thead>
+                <tr className="border-b border-gray-200">
+                  <th className="text-left py-3 px-4 font-medium text-gray-700">
+                    Date
+                  </th>
+                  <th className="text-right py-3 px-4 font-medium text-gray-700">
+                    DAU
+                  </th>
+                  <th className="text-right py-3 px-4 font-medium text-gray-700">
+                    Sessions
+                  </th>
+                  <th className="text-right py-3 px-4 font-medium text-gray-700">
+                    Chats
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {metrics?.recentActivity.map((day) => (
+                  <tr key={day.date} className="border-b border-gray-100">
+                    <td className="py-3 px-4 text-gray-900">{day.date}</td>
+                    <td className="py-3 px-4 text-right text-gray-900">
+                      {day.dau}
+                    </td>
+                    <td className="py-3 px-4 text-right text-gray-900">
+                      {day.sessions}
+                    </td>
+                    <td className="py-3 px-4 text-right text-gray-900">
+                      {day.chats}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* TAM Validation Status */}
+        <div className="bg-gradient-to-r from-blue-50 to-purple-50 p-6 rounded-lg border border-blue-200">
+          <h2 className="text-xl font-bold text-gray-900 mb-4">
+            🎯 TAM Validation Progress
+          </h2>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <ValidationMetric
+              label="Users (Goal: 100)"
+              current={metrics?.totalUsers || 0}
+              target={100}
+            />
+            <ValidationMetric
+              label="DAU/MAU (Goal: 20%)"
+              current={dauMauRatio}
+              target={20}
+              isPercentage
+            />
+            <ValidationMetric
+              label="7-day Retention (Goal: 40%)"
+              current={0} // Implement from cohort analysis
+              target={40}
+              isPercentage
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MetricCard({
+  title,
+  value,
+  icon,
+  subtitle,
+  trend,
+}: {
+  title: string;
+  value: number;
+  icon?: string;
+  subtitle?: string;
+  trend?: string;
+}) {
+  return (
+    <div className="bg-white p-6 rounded-lg shadow">
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="text-sm font-medium text-gray-600">{title}</h3>
+        {icon && <span className="text-2xl">{icon}</span>}
+      </div>
+      <p className="text-3xl font-bold text-gray-900 mb-1">
+        {value.toLocaleString()}
+      </p>
+      {subtitle && <p className="text-sm text-gray-500">{subtitle}</p>}
+      {trend && (
+        <p className="text-sm text-green-600 font-medium mt-2">{trend}</p>
+      )}
+    </div>
+  );
+}
+
+function ValidationMetric({
+  label,
+  current,
+  target,
+  isPercentage = false,
+}: {
+  label: string;
+  current: number;
+  target: number;
+  isPercentage?: boolean;
+}) {
+  const progress = Math.min((current / target) * 100, 100);
+  const isComplete = current >= target;
+
+  return (
+    <div>
+      <div className="flex justify-between items-center mb-2">
+        <span className="text-sm font-medium text-gray-700">{label}</span>
+        <span className="text-sm font-bold text-gray-900">
+          {current.toFixed(isPercentage ? 1 : 0)}
+          {isPercentage ? '%' : ''} / {target}
+          {isPercentage ? '%' : ''}
+        </span>
+      </div>
+      <div className="bg-gray-200 rounded-full h-2 overflow-hidden">
+        <div
+          className={`h-2 rounded-full transition-all ${
+            isComplete ? 'bg-green-500' : 'bg-blue-600'
+          }`}
+          style={{ width: `${progress}%` }}
+        />
+      </div>
+      <div className="text-xs text-gray-500 mt-1">
+        {isComplete ? '✅ Goal reached!' : `${progress.toFixed(0)}% complete`}
+      </div>
+    </div>
+  );
+}
